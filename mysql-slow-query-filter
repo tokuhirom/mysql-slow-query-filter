@@ -1,0 +1,85 @@
+#!/usr/bin/env perl
+use strict;
+use warnings;
+
+package MySQL::SlowLog::PullParser;
+use Time::Piece;
+
+sub new {
+    my ($class) = @_;
+    bless {}, $class;
+}
+
+sub parse {
+    my ($self, $fh, $callback) = @_;
+    my %row;
+    while (<$fh>) {        # Time: 130902 18:22:41
+        if (/\A# Time:\s+([0-9][0-9])([0-9][0-9])([0-9][0-9])\s+([0-9][0-9]?):([0-9][0-9]):([0-9][0-9])/) {
+            if (%row) {
+                $callback->($self, \%row);
+                %row = ();
+            }
+            @row{qw(year month day hour minute second)} = ($1,$2,$3,$4,$5,$6);
+        } elsif (/\A# Query_time: ([0-9.]+)\s+Lock_time: ([0-9.]+)\s+Rows_sent: ([0-9.]+)\s+Rows_examined: ([0-9.]+)/) {
+            # Query_time: 3.911978  Lock_time: 0.000034 Rows_sent: 0  Rows_examined: 0
+            @row{qw(query_time lock_time rows_sent rows_examined)} = ($1,$2,$3,$4);
+        } elsif (/\A# User\@Host: (.*?)\[(.*?)\] \@ (.*) \[(.*)\]/) {
+            # User@Host: root[root] @ localhost []
+            # User@Host: www[www] @  [192.168.1.1]
+            @row{qw(user1 user2 host ip)} = ($1,$2,$3,$4);
+        } elsif (/started with:/) {
+            # /usr/local/mysql55/sbin/mysqld, Version: 5.5.32-log (Source distribution). started with:
+        } elsif (/\ATcp port: /) {
+            # Tcp port: 3306  Unix socket: /tmp/mysql.sock
+        } elsif (/\ATime\s*Id\s*Command\s*Argument/) {
+            # Time                 Id Command    Argument
+        } else {
+            $row{query} .= $_;
+        }
+    }
+    if (%row) {
+        $callback->($self, \%row);
+        %row = ();
+    }
+}
+
+package main;
+use Getopt::Long;
+use Time::Piece;
+
+&main;exit;
+
+sub main {
+    my $version;
+    my $p = Getopt::Long::Parser->new(
+        config => [qw(posix_default no_ignore_case auto_help)]
+    );
+    $p->getoptions(
+        'd|date=s' => \my $date,
+    );
+    if ($date) {
+        $date =~ s/-//g;
+        if (length($date) == 8) { # YYYYMMDD => YYMMDD
+            $date = substr($date, 2);
+        }
+    }
+
+    my $parser = MySQL::SlowLog::PullParser->new();
+    $parser->parse(
+        *STDIN, sub {
+            my ($parser, $log) = @_;
+            my %log = %$log;
+            if (defined $date) {
+                warn Dumper(\%log) unless $log{year};
+                if ($date ne join('', @log{qw(year month day)})) {
+                    return;
+                }
+            }
+            print "*" x 100, "\n\n";
+            printf "20%s-%s-%s %s:%s:%s\n", @log{qw(year month day hour minute second)};
+            printf "Query_time: %s Lock_time: %s Rows_sent: %s Rows_examined: %s\n", @log{qw(query_time lock_time rows_sent rows_examined)};
+            printf "\n";
+            printf "%s\n", $log{query};
+        }
+    );
+}
