@@ -1,7 +1,9 @@
 mysql-slow-query-filter
 =======================
 
-  % mysql-slow-query-filter --date 20130909 < my-slow.log
+
+    % mysql-slow-query-filter --date 20130909 < my-slow.log
+
 
 This is a yet another mysql slow query log filter script, written in perl.
 
